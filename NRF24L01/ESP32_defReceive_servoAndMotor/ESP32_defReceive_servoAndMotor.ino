@@ -1,0 +1,99 @@
+#include <Servo.h>
+#include <SPI.h>
+#include <RF24.h>
+
+#define CE_PIN 9
+#define CSN_PIN 10
+#define SCK_PIN 12
+#define MISO_PIN 13
+#define MOSI_PIN 11
+
+#define MOTOR_ENA 16
+#define MOTOR_IN1 17
+#define MOTOR_IN2 18
+#define LED_PIN 14
+
+static const int servoPin = 5;
+const int frequency = 200;  // Hz
+
+
+RF24 radio(CE_PIN, CSN_PIN);
+uint8_t address[][6] = { "NODE1", "NODE2" };
+Servo servo1;
+
+
+struct Payload {
+  int steer;
+  int speed;
+  int dir;
+  bool button;
+};
+
+
+Payload rxData;
+
+
+void setup() {
+  Serial.begin(115200);
+  pinMode(MOTOR_ENA, OUTPUT);
+  pinMode(MOTOR_IN1, OUTPUT);
+  pinMode(MOTOR_IN2, OUTPUT);
+  pinMode(LED_PIN, OUTPUT);  // change
+  servo1.attach(
+    servoPin,
+    Servo::CHANNEL_NOT_ATTACHED,
+    Servo::DEFAULT_MIN_ANGLE,
+    Servo::DEFAULT_MAX_ANGLE,
+    Servo::DEFAULT_MIN_PULSE_WIDTH_US,
+    Servo::DEFAULT_MAX_PULSE_WIDTH_US,
+    frequency);
+
+  // Explicitly tell the S3 which pins to use for SPI
+  SPI.begin(SCK_PIN, MISO_PIN, MOSI_PIN, CSN_PIN);
+
+
+  if (!radio.begin()) {
+    Serial.println("NRF24 Hardware NOT found!");
+    while (1)
+      ;  // Halt if hardware is missing
+  }
+
+  Serial.println("Radio Started");
+
+  radio.setDataRate(RF24_250KBPS);
+  radio.setChannel(76);
+  radio.openReadingPipe(1, address[1]);
+
+  radio.startListening();
+  Serial.println("Receiver Ready - Awaiting Servo Data...");
+}
+
+void loop() {
+  if (radio.available()) {
+    radio.read(&rxData, sizeof(rxData));
+
+    // Constraints check to keep servo safe
+    if (rxData.steer >= 0 && rxData.steer <= 180) {
+      servo1.write(rxData.steer);
+      Serial.print("Moving Servo to: ");
+      Serial.println(rxData.steer);
+    }
+
+    if (rxData.dir == 1) {  // Forward
+      digitalWrite(MOTOR_IN1, HIGH);
+      digitalWrite(MOTOR_IN2, LOW);
+      analogWrite(MOTOR_ENA, rxData.speed);
+    } else if (rxData.dir == 2) {  // Backward
+      digitalWrite(MOTOR_IN1, LOW);
+      digitalWrite(MOTOR_IN2, HIGH);
+      analogWrite(MOTOR_ENA, rxData.speed);
+    } else {
+      digitalWrite(MOTOR_IN1, LOW);
+      digitalWrite(MOTOR_IN2, LOW);
+      analogWrite(MOTOR_ENA, 0);
+    }
+
+    digitalWrite(LED_PIN, rxData.button);
+    delay(10);
+  }
+}
